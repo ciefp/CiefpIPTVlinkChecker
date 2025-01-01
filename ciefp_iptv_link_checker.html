@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ciefp IPTV Link Checker</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #0d8ede;
+            margin: 0;
+            padding: 20px;
+        }
+        h1 {
+            text-align: center;
+            color: #333;
+        }
+        #controls {
+            display: flex;
+            justify-content: center;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+        button {
+            margin: 0 10px;
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        select, input {
+            margin: 0 10px;
+            padding: 10px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        th, td {
+            border: 1px solid #ccc;
+            padding: 10px;
+            text-align: left;
+        }
+        th {
+            background-color: #35b017;
+        }
+        tr:nth-child(even) {
+            background-color: #f9f9f9;
+        }
+        tr:nth-child(odd) {
+            background-color: #fff;
+        }
+        #stopCheck {
+            background-color: #ff4d4d;
+            color: white;
+            border: none;
+        }
+        #exportResults, #exportJson {
+            background-color: #4caf50;
+            color: white;
+            border: none;
+        }
+        #exportJson {
+            background-color: #008CBA;
+        }
+        #progressBar {
+            width: 100%;
+            background-color: #f3f3f3;
+            margin-top: 20px;
+        }
+        #progressBar div {
+            height: 20px;
+            width: 0;
+            background-color: #4caf50;
+        }
+    </style>
+</head>
+<body>
+    <h1>..:: Ciefp IPTV Link Checker ::..</h1>
+    <div id="controls">
+        <input type="file" id="jsonFile" accept=".json">
+        <button id="checkLinks">Check Links (5 at a time)</button>
+        <button id="stopCheck" disabled>Stop</button>
+        <button id="exportResults" disabled>Export Results (CSV)</button>
+        <button id="exportJson" disabled>Export Available Links (JSON)</button>
+    </div>
+
+    <div id="controls">
+        <label for="statusFilter">Status Filter:</label>
+        <select id="statusFilter">
+            <option value="all">All</option>
+            <option value="available">Available</option>
+            <option value="unavailable">Unavailable</option>
+            <option value="error">Error</option>
+        </select>
+        <label for="typeFilter">Type Filter:</label>
+        <select id="typeFilter">
+            <option value="all">All</option>
+            <option value="mag">MAG</option>
+            <option value="m3u">M3U</option>
+        </select>
+    </div>
+
+    <div id="progressBar">
+        <div id="progress" style="width: 0;"></div>
+    </div>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Type</th>
+                <th>Details</th>
+                <th>Status</th>
+            </tr>
+        </thead>
+        <tbody id="results"></tbody>
+    </table>
+
+    <script>
+        let stopChecking = false;
+        let filteredResults = [];
+
+        document.getElementById('checkLinks').addEventListener('click', async () => {
+            stopChecking = false;
+            document.getElementById('stopCheck').disabled = false;
+            const fileInput = document.getElementById('jsonFile');
+            if (!fileInput.files.length) {
+                alert('Please upload a JSON file.');
+                return;
+            }
+
+            const file = fileInput.files[0];
+            const reader = new FileReader();
+
+            reader.onload = async (e) => {
+                try {
+                    const data = JSON.parse(e.target.result);
+                    const resultsTable = document.getElementById('results');
+                    resultsTable.innerHTML = '';
+                    filteredResults.length = 0;
+
+                    let currentIndex = 0;
+                    const batchSize = 5; // Process 5 links at a time
+
+                    const processLinks = async () => {
+                        const batch = data.slice(currentIndex, currentIndex + batchSize);
+                        if (batch.length === 0 || stopChecking) {
+                            return;
+                        }
+
+                        for (const entry of batch) {
+                            if (stopChecking) {
+                                console.log("Stopping checks.");
+                                break;
+                            }
+
+                            const row = document.createElement('tr');
+                            const typeCell = document.createElement('td');
+                            typeCell.textContent = entry.type === 1 ? 'MAG' : 'M3U';
+
+                            const detailsCell = document.createElement('td');
+                            if (entry.type === 1) {
+                                detailsCell.textContent = `Host: ${entry.host}, MAC: ${entry.mac}`;
+                            } else if (entry.type === 2) {
+                                detailsCell.textContent = `Host: ${entry.host}, Username: ${entry.username}, Password: ${entry.password}`;
+                            }
+
+                            const statusCell = document.createElement('td');
+                            statusCell.textContent = 'Checking...';
+
+                            row.appendChild(typeCell);
+                            row.appendChild(detailsCell);
+                            row.appendChild(statusCell);
+                            resultsTable.appendChild(row);
+
+                            try {
+                                const urlToCheck = entry.type === 1
+                                    ? `${entry.host}${entry.entryPoint || ''}`
+                                    : `${entry.host}`;
+
+                                const response = await fetch(urlToCheck, { method: 'GET' });
+                                if (response.ok) {
+                                    statusCell.textContent = 'Available';
+                                    statusCell.style.color = 'green';
+                                } else {
+                                    statusCell.textContent = 'Unavailable';
+                                    statusCell.style.color = 'red';
+                                }
+                            } catch (error) {
+                                statusCell.textContent = 'Error';
+                                statusCell.style.color = 'red';
+                            }
+
+                            filteredResults.push({
+                                type: entry.type === 1 ? 'MAG' : 'M3U',
+                                details: detailsCell.textContent,
+                                status: statusCell.textContent
+                            });
+                        }
+
+                        currentIndex += batchSize;
+
+                        // Update progress bar
+                        const progress = Math.min((currentIndex / data.length) * 100, 100);
+                        document.getElementById('progress').style.width = progress + '%';
+
+                        if (currentIndex < data.length) {
+                            await processLinks(); // Process next batch of 5 links
+                        } else {
+                            document.getElementById('stopCheck').disabled = true;
+                            document.getElementById('exportResults').disabled = false;
+                            document.getElementById('exportJson').disabled = false;
+                            // Hide the progress bar after processing is finished
+                            document.getElementById('progressBar').style.display = 'none';
+                        }
+                    };
+
+                    await processLinks();
+                } catch (error) {
+                    alert('Invalid JSON file.');
+                }
+            };
+
+            reader.readAsText(file);
+        });
+
+        document.getElementById('stopCheck').addEventListener('click', () => {
+            stopChecking = true;
+            document.getElementById('stopCheck').disabled = true;
+        });
+
+        document.getElementById('exportResults').addEventListener('click', () => {
+            const statusFilter = document.getElementById('statusFilter').value;
+            const typeFilter = document.getElementById('typeFilter').value;
+
+            let filtered = filteredResults;
+
+            if (statusFilter !== 'all') {
+                filtered = filtered.filter(result => result.status.toLowerCase() === statusFilter);
+            }
+            if (typeFilter !== 'all') {
+                filtered = filtered.filter(result => result.type.toLowerCase() === typeFilter);
+            }
+
+            const csvContent = "data:text/csv;charset=utf-8," +
+                "Type,Details,Status\n" +
+                filtered.map(r => `${r.type},"${r.details}",${r.status}`).join("\n");
+
+            const encodedUri = encodeURI(csvContent);
+            const link = document.createElement('a');
+            link.setAttribute('href', encodedUri);
+            link.setAttribute('download', 'iptv_results.csv');
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        });
+
+        document.getElementById('exportJson').addEventListener('click', () => {
+            const availableResults = filteredResults.filter(result => result.status === 'Available');
+
+            const jsonContent = availableResults.map(result => {
+                const entry = {
+                    host: result.details.match(/Host: ([^,]+)/)[1],
+                    type: result.type === 'MAG' ? 1 : 2
+                };
+
+                if (entry.type === 1) {
+                    entry.mac = result.details.match(/MAC: ([^,]+)/)[1];
+                    entry.entryPoint = result.details.match(/entryPoint: ([^,]+)/)?.[1] || 'portal.php';
+                } else if (entry.type === 2) {
+                    entry.username = result.details.match(/Username: ([^,]+)/)[1];
+                    entry.password = result.details.match(/Password: ([^,]+)/)[1];
+                    entry.is_trial = 0;
+                    entry.created_at = 1671469278;
+                    entry.end_date = 1767105237;
+                    entry.max_connections = 1;
+                }
+
+                return entry;
+            });
+
+            const jsonString = JSON.stringify(jsonContent, null, 2);
+            const encodedUri = "data:text/json;charset=utf-8," + encodeURIComponent(jsonString);
+            const link = document.createElement('a');
+            link.setAttribute('href', encodedUri);
+            link.setAttribute('download', 'MultiStalkerPro.json');
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        });
+    </script>
+</body>
+</html>
