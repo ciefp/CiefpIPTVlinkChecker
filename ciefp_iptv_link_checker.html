@@ -76,7 +76,7 @@
     </style>
 </head>
 <body>
-    <h1>..:: Ciefp IPTV Link Checker ::..</h1>
+    <h1>..:: Ciefp IPTV Link Checker 1.1 ::..</h1>
     <div id="controls">
         <input type="file" id="jsonFile" accept=".json">
         <button id="checkLinks">Check Links (5 at a time)</button>
@@ -120,6 +120,14 @@
         let stopChecking = false;
         let filteredResults = [];
 
+        // Fetch with Timeout
+        function fetchWithTimeout(resource, options = {}, timeout = 5000) {
+            const controller = new AbortController();
+            const id = setTimeout(() => controller.abort(), timeout);
+            return fetch(resource, { ...options, signal: controller.signal })
+                .finally(() => clearTimeout(id));
+        }
+
         document.getElementById('checkLinks').addEventListener('click', async () => {
             stopChecking = false;
             document.getElementById('stopCheck').disabled = false;
@@ -140,30 +148,28 @@
                     filteredResults.length = 0;
 
                     let currentIndex = 0;
-                    const batchSize = 5; // Process 5 links at a time
+                    const batchSize = 5;
 
                     const processLinks = async () => {
                         const batch = data.slice(currentIndex, currentIndex + batchSize);
-                        if (batch.length === 0 || stopChecking) {
-                            return;
-                        }
+                        if (batch.length === 0 || stopChecking) return;
 
                         for (const entry of batch) {
-                            if (stopChecking) {
-                                console.log("Stopping checks.");
-                                break;
+                            // Dodajemo provere za tmdb_key i subdl_key
+                            if (entry.tmdb_key || entry.subdl_key) {
+                                continue;  // Preskoči ovu stavku
                             }
+
+                            if (stopChecking) break;
 
                             const row = document.createElement('tr');
                             const typeCell = document.createElement('td');
                             typeCell.textContent = entry.type === 1 ? 'MAG' : 'M3U';
 
                             const detailsCell = document.createElement('td');
-                            if (entry.type === 1) {
-                                detailsCell.textContent = `Host: ${entry.host}, MAC: ${entry.mac}`;
-                            } else if (entry.type === 2) {
-                                detailsCell.textContent = `Host: ${entry.host}, Username: ${entry.username}, Password: ${entry.password}`;
-                            }
+                            detailsCell.textContent = entry.type === 1
+                                ? `Host: ${entry.host}, MAC: ${entry.mac}`
+                                : `Host: ${entry.host}, Username: ${entry.username}, Password: ${entry.password}`;
 
                             const statusCell = document.createElement('td');
                             statusCell.textContent = 'Checking...';
@@ -178,17 +184,24 @@
                                     ? `${entry.host}${entry.entryPoint || ''}`
                                     : `${entry.host}`;
 
-                                const response = await fetch(urlToCheck, { method: 'GET' });
-                                if (response.ok) {
+                                if (entry.type === 1) { // MAG
+                                    const response = await fetchWithTimeout(urlToCheck, { method: 'GET' });
+                                    if (response.ok) {
+                                        statusCell.textContent = 'Available';
+                                        statusCell.style.color = 'green';
+                                    } else {
+                                        statusCell.textContent = 'Unavailable';
+                                        statusCell.style.color = 'red';
+                                    }
+                                } else if (entry.type === 2) { // M3U
+                                    await fetchWithTimeout(entry.host, { method: 'HEAD', mode: 'no-cors' }, 5000);
                                     statusCell.textContent = 'Available';
                                     statusCell.style.color = 'green';
-                                } else {
-                                    statusCell.textContent = 'Unavailable';
-                                    statusCell.style.color = 'red';
                                 }
                             } catch (error) {
-                                statusCell.textContent = 'Error';
+                                statusCell.textContent = 'Unavailable';
                                 statusCell.style.color = 'red';
+                                console.error(`Error checking link: ${entry.host}`, error);
                             }
 
                             filteredResults.push({
@@ -199,18 +212,15 @@
                         }
 
                         currentIndex += batchSize;
-
-                        // Update progress bar
                         const progress = Math.min((currentIndex / data.length) * 100, 100);
                         document.getElementById('progress').style.width = progress + '%';
 
                         if (currentIndex < data.length) {
-                            await processLinks(); // Process next batch of 5 links
+                            await processLinks();
                         } else {
                             document.getElementById('stopCheck').disabled = true;
                             document.getElementById('exportResults').disabled = false;
                             document.getElementById('exportJson').disabled = false;
-                            // Hide the progress bar after processing is finished
                             document.getElementById('progressBar').style.display = 'none';
                         }
                     };
